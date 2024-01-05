@@ -3132,6 +3132,9 @@ bool icMBBToXml(std::string &xml, CIccMBB *pMBB, icConvertType nType, std::strin
   sprintf(buf, "<Channels InputChannels=\"%d\" OutputChannels=\"%d\"/>\n", pMBB->InputChannels(), pMBB->OutputChannels());
   xml += blanks + buf;
 
+  icUInt8Number nbCurves =  pMBB->IsInputB() ? pMBB->InputChannels() : pMBB->OutputChannels();
+  icUInt8Number naCurves = !pMBB->IsInputB() ? pMBB->InputChannels() : pMBB->OutputChannels();
+
   if (pMBB->IsInputMatrix()) {
     if (pMBB->SwapMBCurves()) {
       if (pMBB->GetMatrix()) {
@@ -3143,7 +3146,7 @@ bool icMBBToXml(std::string &xml, CIccMBB *pMBB, icConvertType nType, std::strin
 
       if (pMBB->GetCurvesB()) {
         // added if-statement 
-        if (!icCurvesToXml(xml, "BCurves", pMBB->GetCurvesM(), pMBB->InputChannels(), nType, blanks)) {
+        if (!icCurvesToXml(xml, "BCurves", pMBB->GetCurvesM(), nbCurves, nType, blanks)) {
           return false;
         }
       }
@@ -3151,7 +3154,7 @@ bool icMBBToXml(std::string &xml, CIccMBB *pMBB, icConvertType nType, std::strin
     else {
       if (pMBB->GetCurvesB()) {
         // added if-statement 
-        if (!icCurvesToXml(xml, "BCurves", pMBB->GetCurvesB(), pMBB->InputChannels(), nType, blanks)) {
+        if (!icCurvesToXml(xml, "BCurves", pMBB->GetCurvesB(), nbCurves, nType, blanks)) {
           return false;
         }
       }
@@ -3180,7 +3183,7 @@ bool icMBBToXml(std::string &xml, CIccMBB *pMBB, icConvertType nType, std::strin
 
     if (pMBB->GetCurvesA()) {
       // added if-statement 
-      if (!icCurvesToXml(xml, "ACurves", pMBB->GetCurvesA(), pMBB->OutputChannels(), nType, blanks)){
+      if (!icCurvesToXml(xml, "ACurves", pMBB->GetCurvesA(), naCurves, nType, blanks)){
         return false;
       }
     }
@@ -3188,7 +3191,7 @@ bool icMBBToXml(std::string &xml, CIccMBB *pMBB, icConvertType nType, std::strin
   else {
     if (pMBB->GetCurvesA()) {
       // added if-statement 
-      if (!icCurvesToXml(xml, "ACurves", pMBB->GetCurvesA(), pMBB->InputChannels(), nType, blanks)){
+      if (!icCurvesToXml(xml, "ACurves", pMBB->GetCurvesA(), naCurves, nType, blanks)){
         return false;
       }
     }
@@ -3216,7 +3219,7 @@ bool icMBBToXml(std::string &xml, CIccMBB *pMBB, icConvertType nType, std::strin
 
     if (pMBB->GetCurvesB()) {
       // added if-statement 
-      if (!icCurvesToXml(xml, "BCurves", pMBB->GetCurvesB(), pMBB->OutputChannels(), nType, blanks)){
+      if (!icCurvesToXml(xml, "BCurves", pMBB->GetCurvesB(), nbCurves, nType, blanks)){
         return false;
       }
     }
@@ -3795,10 +3798,16 @@ bool icMBBFromXml(CIccMBB *pMBB, xmlNode *pNode, icConvertType nType, std::strin
   int nOut = atoi(icXmlAttrValue(out));
 
   pMBB->Init(nIn, nOut);
-
+//pMBB->IsInputB() was always true here because it is either CIccTagXmlLut16 or CIccTagXmlLut8
+//which derive from CIccTagLut16 or CIccTagLut8 which derive from CIccMBB and so never flip the inputs internally.
+//Having the right flip currently requires derving from the AtoB or BtoA versions.
+//With this change m_bInputMatrix is now set before getting here.
   for (; pNode; pNode = pNode->next) {
     if (pNode->type == XML_ELEMENT_NODE) {
       if (!icXmlStrCmp(pNode->name, "ACurves") && !pMBB->GetCurvesA()) {
+        //CIccMBB has inputs and outputs and A and B. But if m_bInputMatrix then A is the output and B is the input.
+        //So pCurves here will have [in] if m_bInputMatrix is false and [out] if it is true.
+        //However, CIccMBB actually wants A to always be the input and B to always be theoutput.
         LPIccCurve *pCurves = pMBB->NewCurvesA();
         if (!icCurvesFromXml(pCurves, !pMBB->IsInputB() ? nIn : nOut, pNode->children, nType, parseStr)) {
           parseStr += "Error! - Failed to parse ACurves.\n";
@@ -3885,6 +3894,47 @@ bool CIccTagXmlLutBtoA::ParseXml(xmlNode *pNode, std::string &parseStr)
   return false;
 }
 
+static bool isInputMatrix(xmlNode *pNode) {
+  // TODO: have the caller set this up, now that this is no longer internal.
+  //printf("Parent name %s\n", pNode->parent->parent->name);
+  if (pNode->parent->type == XML_ELEMENT_NODE && (
+      !icXmlStrCmp(pNode->parent->parent->name, "AToB0Tag") ||
+      !icXmlStrCmp(pNode->parent->parent->name, "AToB1Tag") ||
+      !icXmlStrCmp(pNode->parent->parent->name, "AToB2Tag")))
+  {
+    //printf("Not input\n");
+    return false;
+  }
+  //printf("Input\n");
+
+  icSignature sigTag = (icSignature)0;
+  for (xmlNode *tagSigNode = pNode; tagSigNode; tagSigNode = tagSigNode->next) {
+    // This is no longer how this works, instead there is an outer AToB or BToA tag
+    if (tagSigNode->type == XML_ELEMENT_NODE && !icXmlStrCmp(tagSigNode->name, "TagSignature")) {
+        // TODO: if sigTag is already set, ensure this one is compatible
+        sigTag = (icTagSignature)icGetSigVal((const icChar*)tagSigNode->children->content);
+    }
+  }
+
+  switch(sigTag) {
+  case icSigAToB0Tag:
+  case icSigAToB1Tag:
+  case icSigAToB2Tag:
+    return false;
+
+  case icSigBToA0Tag:
+  case icSigBToA1Tag:
+  case icSigBToA2Tag:
+    return true;
+
+  case icSigGamutTag:
+    return true;
+
+  case icSigNamedColor2Tag:
+    return true;
+  }
+  return true;
+}
 
 bool CIccTagXmlLut8::ToXml(std::string &xml, std::string blanks/* = ""*/)
 {
@@ -3900,6 +3950,7 @@ bool CIccTagXmlLut8::ParseXml(xmlNode *pNode, std::string &parseStr)
 {
 
   if (pNode) {
+    this->m_bInputMatrix = isInputMatrix(pNode); // Decide if this is AtoB or BtoA
     return icMBBFromXml(this, pNode, icConvert8Bit, parseStr);
   }
   return false;
@@ -3919,6 +3970,7 @@ bool CIccTagXmlLut16::ToXml(std::string &xml, std::string blanks/* = ""*/)
 bool CIccTagXmlLut16::ParseXml(xmlNode *pNode, std::string &parseStr)
 {
   if (pNode) {
+    this->m_bInputMatrix = isInputMatrix(pNode); // Decide if this is AtoB or BtoA
     return icMBBFromXml(this, pNode, icConvert16Bit, parseStr);
   }
   return false;

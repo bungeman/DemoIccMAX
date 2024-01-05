@@ -708,6 +708,28 @@ bool CIccProfileXml::ParseTag(xmlNode *pNode, std::string &parseStr)
     if (pTag && (pExt = pTag->GetExtension()) && !strcmp(pExt->GetExtClassName(), "CIccTagXml")) {
       CIccTagXml* pXmlTag = (CIccTagXml*)pExt;
 
+      // Need to set the CIccTagLut16/8 to AtoB or BtoA before calling Read.
+      if (pTag->IsMBBType()) {
+        switch(sigType) {
+        case icSigAToB0Tag:
+        case icSigAToB1Tag:
+        case icSigAToB2Tag:
+          ((CIccMBB*)pTag)->SetIsInputB(false);
+          break;
+
+        case icSigBToA0Tag:
+        case icSigBToA1Tag:
+        case icSigBToA2Tag:
+        case icSigGamutTag:
+        case icSigNamedColor2Tag:
+          ((CIccMBB*)pTag)->SetIsInputB(true);
+          break;
+
+        default:
+          break;
+        }
+      }
+
       if (pXmlTag->ParseXml(pNode->children, parseStr)) {
         if ((attr = icXmlFindAttr(pNode, "reserved"))) {
           sscanf(icXmlAttrValue(attr), "%u", &pTag->m_nReserved);

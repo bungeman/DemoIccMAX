@@ -4491,9 +4491,8 @@ bool CIccTagLut8::Read(icUInt32Number size, CIccIO *pIO)
   if (sig!=GetType())
     return false;
 
-  //B Curves
-  pCurves = NewCurvesB();
-
+  //Input Curves
+  pCurves = IsInputB() ? NewCurvesB() : NewCurvesA();
   for (i=0; i<m_nInput; i++) {
     if (256 > nEnd - pIO->Tell())
       return false;
@@ -4504,7 +4503,7 @@ bool CIccTagLut8::Read(icUInt32Number size, CIccIO *pIO)
       return false;
 
     if (pIO->ReadUInt8Float(&(*pCurve)[0], 256) != 256)
-      return false;                                                                       
+      return false;
   }
 
   //CLUT
@@ -4518,8 +4517,8 @@ bool CIccTagLut8::Read(icUInt32Number size, CIccIO *pIO)
   if (!m_CLUT->ReadData(nEnd - pIO->Tell(), pIO, 1))
     return false;
 
-  //A Curves
-  pCurves = NewCurvesA();
+  //Output Curves
+  pCurves = !IsInputB() ? NewCurvesB() : NewCurvesA();
   if (pCurves == NULL)
     return false;
 
@@ -4533,7 +4532,7 @@ bool CIccTagLut8::Read(icUInt32Number size, CIccIO *pIO)
       return false;
 
     if (pIO->ReadUInt8Float(&(*pCurve)[0], 256) != 256)
-      return false;                                                                       
+      return false;
   }
   return true;
 }
@@ -4607,8 +4606,7 @@ bool CIccTagLut8::Write(CIccIO *pIO)
   icTagTypeSignature sig = GetType();
   icUInt8Number i, nGrid;
   icS15Fixed16Number XYZMatrix[9];
-  icUInt16Number nInputEntries, nOutputEntries;
-  LPIccCurve *pCurves;
+  LPIccCurve *pBCurves, *pInCurves, *pOutCurves;
   CIccTagCurve *pCurve;
   icFloat32Number v;
 
@@ -4622,19 +4620,19 @@ bool CIccTagLut8::Write(CIccIO *pIO)
   }
 
   if (m_bUseMCurvesAsBCurves) {
-    pCurves = m_CurvesM;
+    pBCurves = m_CurvesM;
   }
   else {
-    pCurves = m_CurvesB;
+    pBCurves = m_CurvesB;
   }
 
-  if (!pCurves || !m_CurvesA || !m_CLUT)
+  if (!pBCurves || !m_CurvesA || !m_CLUT)
     return false;
 
   nGrid = m_CLUT->GridPoints();
 
-  nInputEntries = (icUInt16Number)(((CIccTagCurve*)pCurves[0])->GetSize());
-  nOutputEntries = (icUInt16Number)(((CIccTagCurve*)m_CurvesA[0])->GetSize());
+  pInCurves = IsInputB() ? pBCurves : m_CurvesA;
+  pOutCurves = !IsInputB() ? pBCurves : m_CurvesA;
 
   if (!pIO->Write32(&sig) ||
       !pIO->Write32(&m_nReserved) ||
@@ -4645,12 +4643,12 @@ bool CIccTagLut8::Write(CIccIO *pIO)
       pIO->Write32(XYZMatrix, 9) != 9)
     return false;
 
-  //B Curves
+  //Input Curves
   for (i=0; i<m_nInput; i++) {
-    if (pCurves[i]->GetType()!=icSigCurveType)
+    if (pInCurves[i]->GetType()!=icSigCurveType)
       return false;
 
-    pCurve = (CIccTagCurve*)pCurves[i];
+    pCurve = (CIccTagCurve*)pInCurves[i];
     if (!pCurve)
       return false;
 
@@ -4673,14 +4671,12 @@ bool CIccTagLut8::Write(CIccIO *pIO)
   if (!m_CLUT->WriteData(pIO, 1))
     return false;
 
-  //A Curves
-  pCurves = m_CurvesA;
-
+  //Output Curves
   for (i=0; i<m_nOutput; i++) {
-    if (pCurves[i]->GetType()!=icSigCurveType)
+    if (pOutCurves[i]->GetType()!=icSigCurveType)
       return false;
 
-    pCurve = (CIccTagCurve*)pCurves[i];
+    pCurve = (CIccTagCurve*)pOutCurves[i];
 
     if (!pCurve)
       return false;
@@ -4739,13 +4735,13 @@ icValidateStatus CIccTagLut8::Validate(std::string sigPath, std::string &sReport
   case icSigGamutTag:
     {
       icUInt32Number nInput, nOutput;
-      if (sig==icSigAToB0Tag || sig==icSigAToB1Tag || sig==icSigAToB2Tag || sig==icSigGamutTag) {
-        nInput = icGetSpaceSamples(pProfile->m_Header.pcs);
-        nOutput = icGetSpaceSamples(pProfile->m_Header.colorSpace);
-      }
-      else {
+      if (sig==icSigAToB0Tag || sig==icSigAToB1Tag || sig==icSigAToB2Tag) {
         nInput = icGetSpaceSamples(pProfile->m_Header.colorSpace);
         nOutput = icGetSpaceSamples(pProfile->m_Header.pcs);
+      }
+      else {
+        nInput = icGetSpaceSamples(pProfile->m_Header.pcs);
+        nOutput = icGetSpaceSamples(pProfile->m_Header.colorSpace);
       }
 
       if (sig==icSigGamutTag) {
@@ -4754,7 +4750,8 @@ icValidateStatus CIccTagLut8::Validate(std::string sigPath, std::string &sReport
 
       icUInt8Number i;
       if (m_CurvesB) {
-        for (i=0; i<nInput; i++) {
+        icUInt32Number nCurves = IsInputB() ? nInput : nOutput;
+        for (i=0; i<nCurves; i++) {
           if (m_CurvesB[i]) {
             rv = icMaxStatus(rv, m_CurvesB[i]->Validate(sigPath+icGetSigPath(GetType()), sReport, pProfile));
             if (m_CurvesB[i]->GetType()==icSigCurveType) {
@@ -4793,8 +4790,8 @@ icValidateStatus CIccTagLut8::Validate(std::string sigPath, std::string &sReport
       }
 
       if (m_CurvesA) {
-
-        for (i=0; i<nOutput; i++) {
+        icUInt32Number nCurves = !IsInputB() ? nInput : nOutput;
+        for (i=0; i<nCurves; i++) {
           if (m_CurvesA[i]) {
             rv = icMaxStatus(rv, m_CurvesA[i]->Validate(sigPath+icGetSigPath(GetType()), sReport, pProfile));
             if (m_CurvesA[i]->GetType()==icSigCurveType) {
@@ -4942,9 +4939,8 @@ bool CIccTagLut16::Read(icUInt32Number size, CIccIO *pIO)
     return false;
 
 
-  //B Curves
-  pCurves = NewCurvesB();
-
+  //Input Curves
+  pCurves = IsInputB() ? NewCurvesB() : NewCurvesA();
   for (i=0; i<m_nInput; i++) {
     if (nInputEntries*sizeof(icUInt16Number) > nEnd - pIO->Tell())
       return false;
@@ -4967,9 +4963,8 @@ bool CIccTagLut16::Read(icUInt32Number size, CIccIO *pIO)
   if (!m_CLUT->ReadData(nEnd - pIO->Tell(), pIO, 2))
     return false;
 
-  //A Curves
-  pCurves = NewCurvesA();
-
+  //Output Curves
+  pCurves = !IsInputB() ? NewCurvesB() : NewCurvesA();
   for (i=0; i<m_nOutput; i++) {
     if (nOutputEntries*sizeof(icUInt16Number) > nEnd - pIO->Tell())
       return false;
@@ -5055,7 +5050,7 @@ bool CIccTagLut16::Write(CIccIO *pIO)
   icUInt8Number i, nGrid;
   icS15Fixed16Number XYZMatrix[9];
   icUInt16Number nInputEntries, nOutputEntries;
-  LPIccCurve *pCurves;
+  LPIccCurve *pBCurves, *pInCurves, *pOutCurves;
   CIccTagCurve *pCurve;
 
   if (m_Matrix) {
@@ -5069,19 +5064,22 @@ bool CIccTagLut16::Write(CIccIO *pIO)
   }
 
   if (m_bUseMCurvesAsBCurves) {
-    pCurves = m_CurvesM;
+    pBCurves = m_CurvesM;
   }
   else {
-    pCurves = m_CurvesB;
+    pBCurves = m_CurvesB;
   }
 
-  if (!pCurves || !m_CurvesA || !m_CLUT)
+  if (!pBCurves || !m_CurvesA || !m_CLUT)
     return false;
 
   nGrid = m_CLUT->GridPoints();
 
-  nInputEntries = (icUInt16Number)(((CIccTagCurve*)pCurves[0])->GetSize());
-  nOutputEntries = (icUInt16Number)(((CIccTagCurve*)m_CurvesA[0])->GetSize());
+  pInCurves = IsInputB() ? pBCurves : m_CurvesA;
+  pOutCurves = !IsInputB() ? pBCurves : m_CurvesA;
+
+  nInputEntries = (icUInt16Number)(((CIccTagCurve*)pInCurves[0])->GetSize());
+  nOutputEntries = (icUInt16Number)(((CIccTagCurve*)pOutCurves[0])->GetSize());
 
   if (!pIO->Write32(&sig) ||
       !pIO->Write32(&m_nReserved) ||
@@ -5094,12 +5092,12 @@ bool CIccTagLut16::Write(CIccIO *pIO)
       !pIO->Write16(&nOutputEntries))
     return false;
 
-  //B Curves
+  //Input Curves
   for (i=0; i<m_nInput; i++) {
-    if (pCurves[i]->GetType()!=icSigCurveType)
+    if (pInCurves[i]->GetType()!=icSigCurveType)
       return false;
 
-    pCurve = (CIccTagCurve*)pCurves[i];
+    pCurve = (CIccTagCurve*)pInCurves[i];
     if (!pCurve)
       return false;
 
@@ -5111,14 +5109,12 @@ bool CIccTagLut16::Write(CIccIO *pIO)
   if (!m_CLUT->WriteData(pIO, 2))
     return false;
 
-  //A Curves
-  pCurves = m_CurvesA;
-
+  //Output Curves
   for (i=0; i<m_nOutput; i++) {
-    if (pCurves[i]->GetType()!=icSigCurveType)
+    if (pOutCurves[i]->GetType()!=icSigCurveType)
       return false;
 
-    pCurve = (CIccTagCurve*)pCurves[i];
+    pCurve = (CIccTagCurve*)pOutCurves[i];
 
     if (pIO->WriteUInt16Float(&(*pCurve)[0], nOutputEntries) != nOutputEntries)
       return false;
@@ -5154,6 +5150,10 @@ icValidateStatus CIccTagLut16::Validate(std::string sigPath, std::string &sRepor
     return rv;
   }
 
+  // So this existing code does not handle IsInputB() appropriately.
+  // If IsInputB() returns true  then this should validate exactly like CIccTagLutBtoA::Validate
+  // If IsInputB() returns false then this should validate exactly like CIccTagLutAtoB::Validate
+
   switch(sig) {
   case icSigAToB0Tag:
   case icSigAToB1Tag:
@@ -5164,13 +5164,13 @@ icValidateStatus CIccTagLut16::Validate(std::string sigPath, std::string &sRepor
   case icSigGamutTag:
     {
       icUInt32Number nInput, nOutput;
-      if (sig==icSigAToB0Tag || sig==icSigAToB1Tag || sig==icSigAToB2Tag || sig==icSigGamutTag) {
-        nInput = icGetSpaceSamples(pProfile->m_Header.pcs);
-        nOutput = icGetSpaceSamples(pProfile->m_Header.colorSpace);
-      }
-      else {
+      if (sig==icSigAToB0Tag || sig==icSigAToB1Tag || sig==icSigAToB2Tag) {
         nInput = icGetSpaceSamples(pProfile->m_Header.colorSpace);
         nOutput = icGetSpaceSamples(pProfile->m_Header.pcs);
+      }
+      else {
+        nInput = icGetSpaceSamples(pProfile->m_Header.pcs);
+        nOutput = icGetSpaceSamples(pProfile->m_Header.colorSpace);
       }
 
       if (sig==icSigGamutTag) {
@@ -5179,7 +5179,8 @@ icValidateStatus CIccTagLut16::Validate(std::string sigPath, std::string &sRepor
 
       icUInt8Number i;
       if (m_CurvesB) {
-        for (i=0; i<nInput; i++) {
+        icUInt32Number nCurves = IsInputB() ? nInput : nOutput;
+        for (i=0; i<nCurves; i++) {
           if (m_CurvesB[i]) {
             rv = icMaxStatus(rv, m_CurvesB[i]->Validate(sigPath+icGetSigPath(GetType()), sReport, pProfile));
             if (m_CurvesB[i]->GetType()==icSigCurveType) {
@@ -5218,8 +5219,8 @@ icValidateStatus CIccTagLut16::Validate(std::string sigPath, std::string &sRepor
       }
 
       if (m_CurvesA) {
-
-        for (i=0; i<nOutput; i++) {
+        icUInt32Number nCurves = !IsInputB() ? nInput : nOutput;
+        for (i=0; i<nCurves; i++) {
           if (m_CurvesA[i]) {
             rv = icMaxStatus(rv, m_CurvesA[i]->Validate(sigPath+icGetSigPath(GetType()), sReport, pProfile));
             if (m_CurvesA[i]->GetType()==icSigCurveType) {

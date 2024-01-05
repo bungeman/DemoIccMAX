@@ -414,11 +414,12 @@ public:
   virtual bool IsMBBType() { return true;}
 
   virtual icUInt8Number GetPrecision() { return 2; }
-  virtual bool IsInputMatrix() { return m_bInputMatrix; } //Is matrix on input side of CLUT?
+  virtual bool IsInputMatrix() const { return m_bInputMatrix; } //Is matrix on input side of CLUT?
   virtual bool UseLegacyPCS() const { return false; } //Treat Lab Encoding differently?
 
-  bool IsInputB() { return IsInputMatrix(); }
-  bool SwapMBCurves() { return m_bUseMCurvesAsBCurves; }
+  bool IsInputB() const { return IsInputMatrix(); }
+  void SetIsInputB(bool b) { m_bInputMatrix = b; }
+  bool SwapMBCurves() const { return m_bUseMCurvesAsBCurves; }
 
   void Cleanup();
   void Init(icUInt8Number nInputChannels, icUInt8Number nOutputChannels);

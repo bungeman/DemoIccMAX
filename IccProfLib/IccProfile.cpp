@@ -1203,6 +1203,28 @@ bool CIccProfile::LoadTag(IccTagEntry *pTagEntry, CIccIO *pIO, bool bReadAll/*=f
   if (!pTag)
     return false;
 
+  // Need to set the CIccTagLut16/8 to AtoB or BtoA before calling Read.
+  if (pTag->IsMBBType()) {
+    switch(pTagEntry->TagInfo.sig) {
+    case icSigAToB0Tag:
+    case icSigAToB1Tag:
+    case icSigAToB2Tag:
+      ((CIccMBB*)pTag)->SetIsInputB(false);
+      break;
+
+    case icSigBToA0Tag:
+    case icSigBToA1Tag:
+    case icSigBToA2Tag:
+    case icSigGamutTag:
+    case icSigNamedColor2Tag:
+      ((CIccMBB*)pTag)->SetIsInputB(true);
+      break;
+
+    default:
+      break;
+    }
+  }
+
   //Now seek back to where the tag starts so the created tag object can read
   //in its data.
   //First we need to get the tag type to create the right kind of tag
@@ -1228,6 +1250,7 @@ bool CIccProfile::LoadTag(IccTagEntry *pTagEntry, CIccIO *pIO, bool bReadAll/*=f
   case icSigAToB1Tag:
   case icSigAToB2Tag:
     if (pTag->IsMBBType())
+      // This is too late, the m_bInputMatrix needs to have been set before the call to Read.
       ((CIccMBB*)pTag)->SetColorSpaces(m_Header.colorSpace, m_Header.pcs);
     break;
 
